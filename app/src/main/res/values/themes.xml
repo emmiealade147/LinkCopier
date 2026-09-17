@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.LinkCopier" parent="Theme.MaterialComponents.DayNight.NoActionBar" />
+</resources>
