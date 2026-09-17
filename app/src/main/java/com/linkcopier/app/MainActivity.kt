@@ -178,45 +178,4 @@ class MainActivity : AppCompatActivity() {
         clipboard.setPrimaryClip(ClipData.newPlainText("Links", text))
         Toast.makeText(this, "Copied ${links.size} link(s) to clipboard", Toast.LENGTH_LONG).show()
     }
-}                val cleaned = result.trim('"').replace("\\\"", "\"")
-                val jsonArray = JSONArray(cleaned)
-                val links = (0 until jsonArray.length()).map { jsonArray.getString(it) }.distinct()
-                copyToClipboard(links)
-            } catch (e: Exception) {
-                Toast.makeText(this, "Couldn't read links from this page", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun fetchAndCopyLinks(url: String) {
-        Toast.makeText(this, "Fetching links…", Toast.LENGTH_SHORT).show()
-        thread {
-            try {
-                val doc = Jsoup.connect(url)
-                    .userAgent("Mozilla/5.0 (Android) LinkCopier")
-                    .timeout(15000)
-                    .get()
-                val links = doc.select("a[href]")
-                    .map { it.absUrl("href") }
-                    .filter { it.isNotBlank() }
-                    .distinct()
-                runOnUiThread { copyToClipboard(links) }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    Toast.makeText(this, "Couldn't fetch that page: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-        }
-    }
-
-    private fun copyToClipboard(links: List<String>) {
-        if (links.isEmpty()) {
-            Toast.makeText(this, "No links found on this page", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val text = links.joinToString("\n")
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Links", text))
-        Toast.makeText(this, "Copied ${links.size} link(s) to clipboard", Toast.LENGTH_SHORT).show()
-    }
 }
