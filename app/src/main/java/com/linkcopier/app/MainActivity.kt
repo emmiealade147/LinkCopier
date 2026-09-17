@@ -14,6 +14,7 @@ import android.widget.Toast
 import android.net.Uri
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONArray
+import org.json.JSONTokener
 import org.jsoup.Jsoup
 import kotlin.concurrent.thread
 
@@ -42,6 +43,9 @@ class MainActivity : AppCompatActivity() {
         val copyButton = findViewById<Button>(R.id.copyButton)
 
         webView.settings.javaScriptEnabled = true
+        webView.settings.userAgentString =
+            "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
         webView.webViewClient = WebViewClient()
 
         goButton.setOnClickListener { loadTypedUrl() }
@@ -90,19 +94,33 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Google (and similar search-result pages) wrap real destinations in a
-     * redirect like "https://www.google.com/url?q=<real link>&sa=...".
-     * This unwraps that so we get the actual website, not Google's wrapper.
+     * redirect like "https://www.google.com/url?...&url=<real link>&ved=...".
+     * This strips off Google's own prefix and keeps everything from the
+     * real link onward, exactly as it appears in the wrapper.
      */
     private fun unwrapRedirect(rawLink: String): String {
-        return try {
-            val uri = Uri.parse(rawLink)
-            val host = uri.host?.lowercase() ?: return rawLink
-            if (!GOOGLE_INFRA_HOST_REGEX.containsMatchIn(host)) return rawLink
-            if (uri.path != "/url") return rawLink
-            uri.getQueryParameter("q") ?: uri.getQueryParameter("url") ?: rawLink
+        val host = try {
+            Uri.parse(rawLink).host?.lowercase()
         } catch (e: Exception) {
-            rawLink
+            null
         }
+        if (host.isNullOrBlank() || !GOOGLE_INFRA_HOST_REGEX.containsMatchIn(host)) {
+            return rawLink
+        }
+
+        for (key in listOf("url", "q")) {
+            for (sep in listOf("&", "?")) {
+                val prefix = "$sep$key="
+                val idx = rawLink.indexOf(prefix)
+                if (idx != -1) {
+                    val start = idx + prefix.length
+                    if (start < rawLink.length) {
+                        return rawLink.substring(start)
+                    }
+                }
+            }
+        }
+        return rawLink
     }
 
     /** True only for well-formed, absolute http/https links pointing at a
@@ -154,14 +172,29 @@ class MainActivity : AppCompatActivity() {
 
         webView.evaluateJavascript(js) { result ->
             try {
-                val cleaned = result.trim('"').replace("\\\"", "\"")
-                val jsonArray = JSONArray(cleaned)
-                val links = (0 until jsonArray.length())
+                // `result` is a JSON-encoded string (our JS returns a JSON.stringify'd
+                // array as a string), and WebView escapes characters like "&" as
+                // "\u0026" inside it. JSONTokener decodes that properly — a naive
+                // trim/replace leaves those escapes broken, corrupting every URL
+                // that contains "&" (i.e. almost every real link).
+                val innerJsonArrayText = JSONTokener(result).nextValue() as String
+                val jsonArray = JSONArray(innerJsonArrayText)
+                val rawCount = jsonArray.length()
+                val links = (0 until rawCount)
                     .map { jsonArray.getString(it) }
                     .map { unwrapRedirect(it) }
                     .distinct()
                     .filter { isValidLink(it) }
-                copyToClipboard(links)
+                if (links.isEmpty() && rawCount == 0) {
+                    Toast.makeText(
+                        this,
+                        "No links found at all on this page — it may still be loading, " +
+                            "or Google may be showing a simplified page. Try the Share menu instead.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    copyToClipboard(links)
+                }
             } catch (e: Exception) {
                 Toast.makeText(this, "Couldn't read links from this page", Toast.LENGTH_SHORT).show()
             }
