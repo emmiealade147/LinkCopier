@@ -15,8 +15,6 @@ import android.net.Uri
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONArray
 import org.json.JSONTokener
-import org.jsoup.Jsoup
-import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
 
@@ -33,6 +31,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var urlInput: EditText
 
+    // When true, the moment the currently-loading page finishes, we
+    // automatically run the copy step — used for the Share-menu flow.
+    private var autoCopyAfterLoad = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -46,7 +48,16 @@ class MainActivity : AppCompatActivity() {
         webView.settings.userAgentString =
             "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-        webView.webViewClient = WebViewClient()
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String?) {
+                super.onPageFinished(view, url)
+                if (autoCopyAfterLoad) {
+                    autoCopyAfterLoad = false
+                    // Give any late JavaScript-rendered links a moment to appear.
+                    view.postDelayed({ copyLinksFromWebView() }, 1200)
+                }
+            }
+        }
 
         goButton.setOnClickListener { loadTypedUrl() }
         urlInput.setOnEditorActionListener { _, actionId, _ ->
@@ -69,7 +80,14 @@ class MainActivity : AppCompatActivity() {
         handleIncomingIntent(intent)
     }
 
-    /** Handles being opened via Chrome's Share menu, or via "Open with". */
+    /**
+     * Handles being opened via Chrome's Share menu, or via "Open with".
+     * We load the shared URL into this app's real, JavaScript-executing
+     * WebView (rather than fetching it in the background) because a page
+     * like Google Search is far more likely to show real results — instead
+     * of a "verify you're a robot" block page — to something that behaves
+     * like an actual browser.
+     */
     private fun handleIncomingIntent(intent: Intent?) {
         intent ?: return
         when (intent.action) {
@@ -78,7 +96,9 @@ class MainActivity : AppCompatActivity() {
                 val url = extractUrl(sharedText)
                 if (url != null) {
                     urlInput.setText(url)
-                    fetchAndCopyLinks(url)
+                    autoCopyAfterLoad = true
+                    webView.loadUrl(url)
+                    Toast.makeText(this, "Loading page…", Toast.LENGTH_SHORT).show()
                 } else {
                     Toast.makeText(this, "No link found in what was shared", Toast.LENGTH_SHORT).show()
                 }
@@ -197,34 +217,6 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 Toast.makeText(this, "Couldn't read links from this page", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    /**
-     * Fetches a URL's HTML server-side and extracts links — used for the
-     * Share-menu flow, so it works without leaving your regular browser.
-     * Note: this won't see links that a page only builds with JavaScript;
-     * for those, open the page in this app's own browser above instead.
-     */
-    private fun fetchAndCopyLinks(url: String) {
-        Toast.makeText(this, "Fetching links…", Toast.LENGTH_SHORT).show()
-        thread {
-            try {
-                val doc = Jsoup.connect(url)
-                    .userAgent("Mozilla/5.0 (Android) LinkCopier")
-                    .timeout(15000)
-                    .get()
-                val links = doc.select("a[href]")
-                    .map { it.absUrl("href") }
-                    .map { unwrapRedirect(it) }
-                    .distinct()
-                    .filter { isValidLink(it) }
-                runOnUiThread { copyToClipboard(links) }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    Toast.makeText(this, "Couldn't fetch that page: ${e.message}", Toast.LENGTH_LONG).show()
-                }
             }
         }
     }
