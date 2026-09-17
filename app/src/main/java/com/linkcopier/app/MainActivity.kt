@@ -15,9 +15,20 @@ import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONArray
 import org.jsoup.Jsoup
 import java.net.URI
+import java.net.URLDecoder
 import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        // Google's own infrastructure/ad/tracking domains — never real search results.
+        private val GOOGLE_INFRA_HOST_REGEX = Regex(
+            "(^|\\.)google\\.[a-z.]+$|(^|\\.)gstatic\\.com$|(^|\\.)googleusercontent\\.com$|" +
+                "(^|\\.)googleadservices\\.com$|(^|\\.)googlesyndication\\.com$|" +
+                "(^|\\.)doubleclick\\.net$|(^|\\.)ggpht\\.com$|(^|\\.)googleapis\\.com$",
+            RegexOption.IGNORE_CASE
+        )
+    }
 
     private lateinit var webView: WebView
     private lateinit var urlInput: EditText
@@ -78,14 +89,39 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** True only for well-formed, absolute http/https links — filters out
-     * javascript:, mailto:, tel:, bare "#" anchors, and malformed URLs. */
+    /**
+     * Google (and similar search-result pages) wrap real destinations in a
+     * redirect like "https://www.google.com/url?q=<real link>&sa=...".
+     * This unwraps that so we get the actual website, not Google's wrapper.
+     */
+    private fun unwrapRedirect(rawLink: String): String {
+        return try {
+            val uri = URI(rawLink)
+            val host = uri.host?.lowercase() ?: return rawLink
+            if (!GOOGLE_INFRA_HOST_REGEX.containsMatchIn(host)) return rawLink
+            if (uri.path != "/url" || uri.query == null) return rawLink
+
+            val params = uri.query.split("&")
+            val qParam = params.firstOrNull { it.startsWith("q=") }
+                ?: params.firstOrNull { it.startsWith("url=") }
+            val encoded = qParam?.substringAfter("=") ?: return rawLink
+            URLDecoder.decode(encoded, "UTF-8")
+        } catch (e: Exception) {
+            rawLink
+        }
+    }
+
+    /** True only for well-formed, absolute http/https links pointing at a
+     * real external site — filters out javascript:, mailto:, tel:, bare
+     * "#" anchors, malformed URLs, and Google's own nav/tracking domains. */
     private fun isValidLink(link: String): Boolean {
         if (link.isBlank()) return false
         return try {
             val uri = URI(link)
             val scheme = uri.scheme?.lowercase()
-            (scheme == "http" || scheme == "https") && !uri.host.isNullOrBlank()
+            val host = uri.host
+            if (!(scheme == "http" || scheme == "https") || host.isNullOrBlank()) return false
+            !GOOGLE_INFRA_HOST_REGEX.containsMatchIn(host.lowercase())
         } catch (e: Exception) {
             false
         }
@@ -128,6 +164,7 @@ class MainActivity : AppCompatActivity() {
                 val jsonArray = JSONArray(cleaned)
                 val links = (0 until jsonArray.length())
                     .map { jsonArray.getString(it) }
+                    .map { unwrapRedirect(it) }
                     .distinct()
                     .filter { isValidLink(it) }
                 copyToClipboard(links)
@@ -153,6 +190,7 @@ class MainActivity : AppCompatActivity() {
                     .get()
                 val links = doc.select("a[href]")
                     .map { it.absUrl("href") }
+                    .map { unwrapRedirect(it) }
                     .distinct()
                     .filter { isValidLink(it) }
                 runOnUiThread { copyToClipboard(links) }
