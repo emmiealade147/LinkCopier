@@ -11,11 +11,10 @@ import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Toast
+import android.net.Uri
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONArray
 import org.jsoup.Jsoup
-import java.net.URI
-import java.net.URLDecoder
 import kotlin.concurrent.thread
 
 class MainActivity : AppCompatActivity() {
@@ -96,16 +95,11 @@ class MainActivity : AppCompatActivity() {
      */
     private fun unwrapRedirect(rawLink: String): String {
         return try {
-            val uri = URI(rawLink)
+            val uri = Uri.parse(rawLink)
             val host = uri.host?.lowercase() ?: return rawLink
             if (!GOOGLE_INFRA_HOST_REGEX.containsMatchIn(host)) return rawLink
-            if (uri.path != "/url" || uri.query == null) return rawLink
-
-            val params = uri.query.split("&")
-            val qParam = params.firstOrNull { it.startsWith("q=") }
-                ?: params.firstOrNull { it.startsWith("url=") }
-            val encoded = qParam?.substringAfter("=") ?: return rawLink
-            URLDecoder.decode(encoded, "UTF-8")
+            if (uri.path != "/url") return rawLink
+            uri.getQueryParameter("q") ?: uri.getQueryParameter("url") ?: rawLink
         } catch (e: Exception) {
             rawLink
         }
@@ -117,7 +111,7 @@ class MainActivity : AppCompatActivity() {
     private fun isValidLink(link: String): Boolean {
         if (link.isBlank()) return false
         return try {
-            val uri = URI(link)
+            val uri = Uri.parse(link)
             val scheme = uri.scheme?.lowercase()
             val host = uri.host
             if (!(scheme == "http" || scheme == "https") || host.isNullOrBlank()) return false
